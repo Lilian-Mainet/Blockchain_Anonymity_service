@@ -168,3 +168,71 @@
       (increment-user-count tx-sender)
       (var-set message-counter (+ message-id u1))
       (ok message-id))))
+
+;; Admin functions
+(define-public (update-service-fee (new-fee uint))
+  (begin
+    (asserts! (is-contract-owner) err-owner-only)
+    (var-set service-fee new-fee)
+    (ok true)))
+
+(define-public (update-rate-limits 
+    (new-window uint) 
+    (new-max-messages uint))
+  (begin
+    (asserts! (is-contract-owner) err-owner-only)
+    (var-set rate-limit-window new-window)
+    (var-set max-messages-per-window new-max-messages)
+    (ok true)))
+
+(define-read-only (get-message-replies (message-id uint))
+  (map-get? message-replies message-id))
+
+(define-read-only (get-user-message-count (user principal))
+  (let ((current-window (/ block-height (var-get rate-limit-window))))
+    (default-to u0 
+      (map-get? user-message-count 
+                {user: user, window: current-window}))))
+
+(define-read-only (get-service-fee)
+  (var-get service-fee))
+
+;; Private function to get parent message reply depth
+(define-private (get-parent-depth (parent-id uint))
+  (match (map-get? messages parent-id)
+    parent (get reply-depth parent)
+    u0))
+
+(define-read-only (get-message-depth (message-id uint))
+  (match (map-get? messages message-id)
+    message (get reply-depth message)
+    u0))
+
+(define-public (reply-to-message 
+    (content (string-utf8 500))
+    (parent-id uint)
+    (encrypted bool))
+  (begin
+    (asserts! (is-initialized) err-not-initialized)
+    (asserts! (check-rate-limit tx-sender) err-rate-limit-exceeded)
+    (asserts! (does-message-exist parent-id) err-message-not-found)
+    (let ((parent-depth (get-parent-depth parent-id))
+          (new-depth (+ parent-depth u1)))
+      (asserts! (< new-depth max-reply-depth) err-invalid-reply-depth)
+      (let ((message-id (var-get message-counter)))
+        (map-set messages message-id 
+                 {sender: none,
+                  content: content,
+                  timestamp: block-height,
+                  category: none,
+                  reply-to: (some parent-id),
+                  reply-depth: new-depth,  ;; Store the calculated depth
+                  encrypted: encrypted})
+        (map-set message-replies parent-id 
+                 (unwrap-panic (as-max-len? 
+                   (append (default-to (list) (map-get? message-replies parent-id)) 
+                           message-id) 
+                   u20)))
+        (increment-user-count tx-sender)
+        (var-set message-counter (+ message-id u1))
+        (ok message-id)))))
