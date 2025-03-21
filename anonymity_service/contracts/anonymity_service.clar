@@ -26,3 +26,18 @@
 (define-data-var service-fee uint u100) ;; in microSTX
 (define-data-var rate-limit-window uint u86400) ;; 24 hours in seconds
 (define-data-var max-messages-per-window uint u10)
+
+;; Define data maps
+(define-map messages uint {
+    sender: (optional principal),
+    content: (string-utf8 500),
+    timestamp: uint,
+    category: (optional (string-utf8 50)),
+    reply-to: (optional uint),
+    reply-depth: uint,
+    encrypted: bool
+})
+
+(define-map user-message-count {user: principal, window: uint} uint)
+(define-map categories (string-utf8 50) bool)
+(define-map message-replies uint (list 20 uint))
