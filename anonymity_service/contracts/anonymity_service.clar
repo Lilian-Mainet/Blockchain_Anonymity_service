@@ -100,3 +100,71 @@
   (match (map-get? messages message-id)
     message true
     false))
+
+;; Public function to get messages count in a specific range
+(define-read-only (get-messages-count (start uint) (end uint))
+  (if (and (<= start end) 
+           (< end (var-get message-counter)))
+      (ok (- end start))
+      (err err-invalid-message-count)))
+
+;; Public function to send bulk messages (simplified version)
+(define-public (send-bulk-messages (content-1 (string-utf8 500)) 
+                                 (content-2 (string-utf8 500)))
+  (begin
+    (asserts! (is-initialized) err-not-initialized)
+    (asserts! (and (is-valid-content content-1)
+                   (is-valid-content content-2)) 
+              err-invalid-message-length)
+    (let ((id-1 (var-get message-counter)))
+      (begin
+        (map-set messages id-1 
+                 {sender: none, content: content-1, timestamp: block-height, category: none, reply-to: none, reply-depth: u0, encrypted: false})
+        (var-set message-counter (+ id-1 u1))
+        (let ((id-2 (var-get message-counter)))
+          (begin
+            (map-set messages id-2 
+                     {sender: none, content: content-2, timestamp: block-height, category: none, reply-to: none, reply-depth: u0, encrypted: false})
+            (var-set message-counter (+ id-2 u1))
+            (ok {first-id: id-1, second-id: id-2})))))))
+
+;; Public function to get the last valid message ID
+(define-read-only (get-last-message-id)
+  (let ((counter (var-get message-counter)))
+    (if (> counter u0)
+        (ok (- counter u1))
+        (err err-not-initialized))))
+
+
+(define-private (check-rate-limit (user principal))
+  (let ((current-window (/ block-height (var-get rate-limit-window)))
+        (current-count (default-to u0 (map-get? user-message-count {user: user, window: current-window}))))
+    (< current-count (var-get max-messages-per-window))))
+
+(define-private (increment-user-count (user principal))
+  (let ((current-window (/ block-height (var-get rate-limit-window)))
+        (current-count (default-to u0 (map-get? user-message-count {user: user, window: current-window}))))
+    (map-set user-message-count 
+             {user: user, window: current-window}
+             (+ current-count u1))))
+
+(define-public (send-anonymous-message-with-category 
+    (content (string-utf8 500))
+    (category (optional (string-utf8 50)))
+    (encrypted bool))
+  (begin
+    (asserts! (is-initialized) err-not-initialized)
+    (asserts! (check-rate-limit tx-sender) err-rate-limit-exceeded)
+    (asserts! (is-valid-content content) err-invalid-message-length)
+    (let ((message-id (var-get message-counter)))
+      (map-set messages message-id 
+               {sender: none,
+                content: content,
+                timestamp: block-height,
+                category: category,
+                reply-to: none,
+                reply-depth: u0,
+                encrypted: encrypted})
+      (increment-user-count tx-sender)
+      (var-set message-counter (+ message-id u1))
+      (ok message-id))))
